@@ -68,3 +68,7 @@ data/*.csv
 Thumbs.db
 .idea/
 *.swp
+
+# Materiel de cours (pas mon travail)
+slides/
+tp/
