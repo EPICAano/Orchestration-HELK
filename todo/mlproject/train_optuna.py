@@ -1,18 +1,9 @@
 """Optimisation d'hyperparametres avec Optuna.
 
 Seance 6 - TP Optuna
-    Ce module optimise les hyperparametres de trois familles de modeles
-    (Random Forest, XGBoost, LightGBM) avec Optuna (sampler TPE), compare
-    leurs performances et persiste le meilleur dans `models/model.joblib`.
-    Completez les TODO (S6-n).
-
-Chaque famille est suivie dans MLflow (un run par famille, imbrique sous un
-run parent) et la meilleure est enregistree dans le Model Registry.
-
-Lancement :
-    python -m mlproject.train_optuna
-    python -m mlproject.train_optuna --n-trials 50 --cv 3
-    python -m mlproject.train_optuna --no-mlflow   # desactive le suivi MLflow
+    Optimise les hyperparametres de trois familles (RF, XGBoost, LightGBM)
+    avec Optuna (sampler TPE), compare et persiste le meilleur.
+    Suivi MLflow via la configuration partagee (mlproject.tracking).
 """
 from __future__ import annotations
 
@@ -37,18 +28,21 @@ from sklearn.metrics import (
 )
 from sklearn.pipeline import Pipeline
 
-# TODO (S6-1) : importer optuna, optuna.samplers et
-#               sklearn.model_selection.cross_val_score
+# TODO (S6-1)
+import optuna
+import optuna.samplers
+from sklearn.model_selection import cross_val_score
 
-from mlproject.config import (
-    MLFLOW_EXPERIMENT,
-    MLFLOW_TRACKING_URI,
-    MODEL_DIR,
-    MODEL_NAME,
-)
+from mlproject.config import MODEL_DIR, MODEL_NAME, RANDOM_STATE
 from mlproject.data import load_data, split
 from mlproject.evaluation import log_shap_summary
 from mlproject.features import build_preprocessor
+from mlproject.tracking import setup_experiment, log_dataset
+
+# TODO (S6-2) : imports des modeles
+from sklearn.ensemble import RandomForestClassifier
+from xgboost import XGBClassifier
+from lightgbm import LGBMClassifier
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
@@ -56,59 +50,67 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class ModelSpec:
-    """Specification d'une famille de modeles a optimiser avec Optuna.
-
-    Parameters
-    ----------
-    name : str
-        Identifiant lisible de la famille de modeles.
-    suggest_params : Callable[[optuna.Trial], dict]
-        Construit un jeu d'hyperparametres pour un essai donne.
-    build_estimator : Callable[[dict], ClassifierMixin]
-        Construit l'estimateur scikit-learn a partir d'un jeu d'hyperparametres.
-    """
-
     name: str
     suggest_params: Callable
     build_estimator: Callable[[dict], ClassifierMixin]
 
 
 def build_model_specs() -> list[ModelSpec]:
-    """Construire la liste des familles de modeles a optimiser.
+    """Construire la liste des familles de modeles a optimiser."""
+    # TODO (S6-2)
+    def rf_suggest(trial) -> dict:
+        return {
+            "n_estimators": trial.suggest_int("n_estimators", 100, 300),
+            "max_depth": trial.suggest_categorical("max_depth", [None, 10, 20, 30]),
+            "min_samples_leaf": trial.suggest_int("min_samples_leaf", 1, 5),
+        }
 
-    Returns
-    -------
-    list of ModelSpec
-        Random Forest, XGBoost et LightGBM avec leurs espaces de recherche.
-    """
-    # TODO (S6-2) : importer RandomForestClassifier (sklearn.ensemble), XGBClassifier
-    #               (xgboost), LGBMClassifier (lightgbm) et RANDOM_STATE
-    #               (mlproject.config), puis pour chaque famille definir suggest_params
-    #               (espace de recherche via trial.suggest_*) et build_estimator
-    #               (construction de l'estimateur a partir des hyperparametres,
-    #               avec cast(ClassifierMixin, ...) si necessaire) :
-    #   - random_forest : n_estimators (int, ex. 100-300), max_depth
-    #     (categorical, ex. [None, 10, 20, 30]), min_samples_leaf (int, ex. 1-5)
-    #   - xgboost       : n_estimators (int, ex. 100-300), max_depth (int, ex. 3-10),
-    #     learning_rate (float, echelle log, ex. 0.01-0.3)
-    #   - lightgbm      : n_estimators (int, ex. 50-300), num_leaves (int, ex. 15-127),
-    #     learning_rate (float, echelle log, ex. 0.01-0.3), max_depth (int, ex. 3-12)
-    raise NotImplementedError
+    def rf_build(params: dict) -> ClassifierMixin:
+        return cast(
+            ClassifierMixin,
+            RandomForestClassifier(random_state=RANDOM_STATE, n_jobs=-1, **params),
+        )
+
+    def xgb_suggest(trial) -> dict:
+        return {
+            "n_estimators": trial.suggest_int("n_estimators", 100, 300),
+            "max_depth": trial.suggest_int("max_depth", 3, 10),
+            "learning_rate": trial.suggest_float("learning_rate", 0.01, 0.3, log=True),
+        }
+
+    def xgb_build(params: dict) -> ClassifierMixin:
+        return cast(
+            ClassifierMixin,
+            XGBClassifier(
+                random_state=RANDOM_STATE,
+                eval_metric="logloss",
+                n_jobs=-1,
+                **params,
+            ),
+        )
+
+    def lgbm_suggest(trial) -> dict:
+        return {
+            "n_estimators": trial.suggest_int("n_estimators", 50, 300),
+            "num_leaves": trial.suggest_int("num_leaves", 15, 127),
+            "learning_rate": trial.suggest_float("learning_rate", 0.01, 0.3, log=True),
+            "max_depth": trial.suggest_int("max_depth", 3, 12),
+        }
+
+    def lgbm_build(params: dict) -> ClassifierMixin:
+        return cast(
+            ClassifierMixin,
+            LGBMClassifier(random_state=RANDOM_STATE, verbose=-1, **params),
+        )
+
+    return [
+        ModelSpec(name="random_forest", suggest_params=rf_suggest, build_estimator=rf_build),
+        ModelSpec(name="xgboost", suggest_params=xgb_suggest, build_estimator=xgb_build),
+        ModelSpec(name="lightgbm", suggest_params=lgbm_suggest, build_estimator=lgbm_build),
+    ]
 
 
 def build_pipeline(estimator: ClassifierMixin) -> Pipeline:
-    """Assembler le preprocessing et un classifieur dans un pipeline.
-
-    Parameters
-    ----------
-    estimator : ClassifierMixin
-        Classifieur place en derniere etape (``clf``).
-
-    Returns
-    -------
-    Pipeline
-        Pipeline scikit-learn pret a etre optimise.
-    """
     return Pipeline(
         steps=[
             ("preprocessor", build_preprocessor()),
@@ -118,74 +120,32 @@ def build_pipeline(estimator: ClassifierMixin) -> Pipeline:
 
 
 def objective(trial, spec: ModelSpec, x_train, y_train, cv: int) -> float:
-    """Fonction objectif Optuna : score moyen de validation croisee.
-
-    Parameters
-    ----------
-    trial : optuna.Trial
-        Essai courant.
-    spec : ModelSpec
-        Famille de modeles optimisee.
-    x_train, y_train : array-like
-        Donnees d'entrainement.
-    cv : int
-        Nombre de plis de validation croisee.
-
-    Returns
-    -------
-    float
-        Score ROC AUC moyen sur les plis de validation croisee (a maximiser).
-    """
-    # TODO (S6-3) : appeler spec.suggest_params(trial) puis spec.build_estimator(params),
-    #               construire le pipeline avec build_pipeline, evaluer avec
-    #               cross_val_score (scoring="roc_auc", cv=cv) et retourner la moyenne
-    raise NotImplementedError
+    """Fonction objectif Optuna : ROC AUC moyen en validation croisee."""
+    # TODO (S6-3)
+    params = spec.suggest_params(trial)
+    estimator = spec.build_estimator(params)
+    pipeline = build_pipeline(estimator)
+    scores = cross_val_score(pipeline, x_train, y_train, scoring="roc_auc", cv=cv)
+    return float(scores.mean())
 
 
 def run_study(spec: ModelSpec, x_train, y_train, n_trials: int, cv: int):
-    """Lancer l'etude Optuna pour une famille de modeles.
-
-    Parameters
-    ----------
-    spec : ModelSpec
-        Famille de modeles a optimiser.
-    x_train, y_train : array-like
-        Donnees d'entrainement.
-    n_trials : int
-        Nombre d'essais a evaluer.
-    cv : int
-        Nombre de plis de validation croisee passe a `objective`.
-
-    Returns
-    -------
-    optuna.Study
-        Etude Optuna une fois l'optimisation terminee.
-    """
-    # TODO (S6-4) : creer l'etude avec optuna.create_study
-    #               (direction="maximize", sampler=optuna.samplers.TPESampler(seed=RANDOM_STATE))
-    # TODO (S6-5) : lancer study.optimize sur `n_trials` essais, en appelant
-    #               objective(trial, spec, x_train, y_train, cv) pour chaque essai
-    raise NotImplementedError
+    """Lancer l'etude Optuna pour une famille de modeles."""
+    # TODO (S6-4)
+    study = optuna.create_study(
+        direction="maximize",
+        sampler=optuna.samplers.TPESampler(seed=RANDOM_STATE),
+    )
+    # TODO (S6-5)
+    study.optimize(
+        lambda trial: objective(trial, spec, x_train, y_train, cv),
+        n_trials=n_trials,
+    )
+    return study
 
 
 @dataclass
 class FamilyResult:
-    """Resultat d'optimisation d'une famille de modeles.
-
-    Parameters
-    ----------
-    spec : ModelSpec
-        Famille de modeles optimisee.
-    study : optuna.Study
-        Etude Optuna terminee.
-    best_pipeline : Pipeline
-        Pipeline reentraine avec les meilleurs hyperparametres.
-    test_roc_auc : float
-        ROC AUC sur le jeu de test.
-    preds : np.ndarray
-        Predictions (classes) sur le jeu de test.
-    """
-
     spec: ModelSpec
     study: Any
     best_pipeline: Pipeline
@@ -202,26 +162,7 @@ def optimize_family(
     n_trials: int,
     cv: int,
 ) -> FamilyResult:
-    """Optimiser une famille de modeles avec Optuna et l'evaluer sur le test.
-
-    Parameters
-    ----------
-    spec : ModelSpec
-        Famille de modeles a optimiser.
-    x_train, y_train : array-like
-        Donnees d'entrainement.
-    x_test, y_test : array-like
-        Donnees de test pour l'evaluation finale.
-    n_trials : int
-        Nombre d'essais Optuna.
-    cv : int
-        Nombre de plis de validation croisee.
-
-    Returns
-    -------
-    FamilyResult
-        Meilleur pipeline et metriques associees.
-    """
+    """Optimiser une famille avec Optuna et l'evaluer sur le test."""
     logger.info("Optimisation de %s (n_trials=%d, cv=%d)", spec.name, n_trials, cv)
     study = run_study(spec, x_train, y_train, n_trials=n_trials, cv=cv)
 
@@ -255,35 +196,19 @@ def log_family_to_mlflow(
     cv: int,
     register_as: str | None = None,
 ) -> None:
-    """Logger une famille de modeles dans un run MLflow imbrique.
-
-    Parameters
-    ----------
-    result : FamilyResult
-        Resultat a tracer (etude Optuna, pipeline, metriques).
-    x_test : pandas.DataFrame
-        Jeu de test, utilise pour inferer la signature et un exemple d'entree.
-    y_test : array-like
-        Cibles du jeu de test, utilisees pour la matrice de confusion et le
-        rapport de classification.
-    n_trials : int
-        Nombre d'essais Optuna (loggue comme parametre).
-    cv : int
-        Nombre de plis de validation croisee (loggue comme parametre).
-    register_as : str, optional
-        Si fourni, enregistre le modele dans le Model Registry sous ce nom.
-    """
+    """Logger une famille de modeles dans un run MLflow imbrique."""
     with mlflow.start_run(run_name=result.spec.name, nested=True):
         mlflow.set_tag("model_family", result.spec.name)
         mlflow.set_tag("sampler", "TPE")
         mlflow.log_param("n_trials", n_trials)
         mlflow.log_param("cv", cv)
 
-        # TODO (S6-6) : pour chaque trial de result.study.trials, ouvrir un run
-        #               MLflow imbrique (nested=True) et logger trial.params
-        #               ainsi que la metrique "cv_roc_auc" = trial.value
+        # TODO (S6-6)
         for trial in result.study.trials:
-            ...
+            with mlflow.start_run(run_name=f"{result.spec.name}-trial-{trial.number}", nested=True):
+                mlflow.log_params(trial.params)
+                if trial.value is not None:
+                    mlflow.log_metric("cv_roc_auc", trial.value)
 
         mlflow.log_params(result.study.best_params)
         mlflow.log_metric("cv_roc_auc", result.study.best_value)
@@ -312,11 +237,7 @@ def log_family_to_mlflow(
             registered_model_name=register_as,
         )
 
-        # TODO (S6-7 bonus) : renommez _model_info en model_info ; si register_as
-        #               est defini et que model_info.registered_model_version est
-        #               defini, appelez describe_registered_version pour
-        #               documenter cette version dans le Model Registry
-        #               (description + tags)
+        # TODO (S6-7 bonus) : documenter la version dans le registry (non implemente)
 
 
 def describe_registered_version(
@@ -326,67 +247,19 @@ def describe_registered_version(
     n_trials: int,
     cv: int,
 ) -> None:
-    """Documenter une version enregistree dans le Model Registry.
-
-    Ajoute une description (algorithme, hyperparametres, metriques) et des
-    tags (famille de modele, methode de recherche, scores) sur la version du
-    modele afin de pouvoir comparer les versions sans rouvrir le run MLflow.
-
-    Parameters
-    ----------
-    name : str
-        Nom du modele enregistre dans le registry.
-    version : int
-        Version enregistree a documenter.
-    result : FamilyResult
-        Resultat d'optimisation associe a cette version.
-    n_trials : int
-        Nombre d'essais Optuna par famille.
-    cv : int
-        Nombre de plis de validation croisee.
-    """
-    # TODO (S6-7 bonus) : creer un mlflow.MlflowClient() puis
-    #   - client.update_model_version(name, version, description=...) avec un
-    #     resume (famille, sampler, nombre d'essais, meilleurs hyperparametres,
-    #     scores)
-    #   - client.set_model_version_tag(name, version, key, value) pour des tags
-    #     tels que model_family, search_method, n_trials, cv, cv_roc_auc,
-    #     test_roc_auc
+    """Documenter une version enregistree dans le Model Registry (bonus S6-7)."""
+    # TODO (S6-7 bonus) : non implemente pour l'instant
     raise NotImplementedError
 
 
 def optimize(n_trials: int = 30, cv: int = 5, use_mlflow: bool = True) -> list[FamilyResult]:
-    """Optimiser RF / XGBoost / LightGBM avec Optuna et sauvegarder le meilleur.
-
-    Le meilleur modele (selon le ROC AUC de test) est persiste dans
-    ``models/model.joblib``. Lorsque ``use_mlflow`` est actif, chaque famille
-    est suivie dans un run MLflow imbrique sous un run parent
-    ``optuna-compare``, et la meilleure est enregistree dans le Model Registry
-    sous ``MODEL_NAME``.
-
-    Parameters
-    ----------
-    n_trials : int, optional
-        Nombre d'essais Optuna par famille de modeles, par defaut 30.
-    cv : int, optional
-        Nombre de plis de validation croisee, par defaut 5.
-    use_mlflow : bool, optional
-        Active le suivi MLflow, par defaut True.
-
-    Returns
-    -------
-    list of FamilyResult
-        Resultats tries du meilleur au moins bon (ROC AUC de test decroissant).
-    """
+    """Optimiser RF / XGBoost / LightGBM avec Optuna et sauvegarder le meilleur."""
     df = load_data()
     x_train, x_test, y_train, y_test = split(df)
 
     if use_mlflow:
-        mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
-        mlflow.set_experiment(MLFLOW_EXPERIMENT)
-        logger.info(
-            "Suivi MLflow : %s (experience: %s)", MLFLOW_TRACKING_URI, MLFLOW_EXPERIMENT
-        )
+        setup_experiment()
+        logger.info("Suivi MLflow configure via mlproject.tracking")
 
     results = [
         optimize_family(spec, x_train, y_train, x_test, y_test, n_trials=n_trials, cv=cv)
@@ -399,6 +272,7 @@ def optimize(n_trials: int = 30, cv: int = 5, use_mlflow: bool = True) -> list[F
 
     if use_mlflow:
         with mlflow.start_run(run_name="optuna-compare"):
+            log_dataset(df, context="training")
             mlflow.log_param("n_trials", n_trials)
             mlflow.log_param("cv", cv)
             mlflow.set_tag("best_model", best.spec.name)
