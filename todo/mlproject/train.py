@@ -1,7 +1,8 @@
 """Entrainement du modele de classification (baseline).
 
 Seance 5 - TP MLflow Tracking
-    Ce script entraine et evalue un modele AVEC suivi d'experience MLflow.
+    Entrainement instrumente avec MLflow, via la configuration partagee
+    de mlproject.tracking (setup_experiment + log_dataset).
 """
 from __future__ import annotations
 
@@ -12,13 +13,14 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import f1_score, roc_auc_score
 from sklearn.pipeline import Pipeline
 
-from mlproject.config import MODEL_DIR, MLFLOW_TRACKING_URI, MLFLOW_EXPERIMENT
+from mlproject.config import MODEL_DIR
 from mlproject.data import load_data, split
 from mlproject.features import build_preprocessor
 
 # TODO (S5-1) : importer mlflow et mlflow.sklearn
 import mlflow
 import mlflow.sklearn
+from mlproject.tracking import setup_experiment, log_dataset
 
 
 def build_model(c: float = 1.0, max_iter: int = 1000) -> Pipeline:
@@ -34,12 +36,14 @@ def train(c: float = 1.0, max_iter: int = 1000) -> dict:
     df = load_data()
     x_train, x_test, y_train, y_test = split(df)
 
-    # TODO (S5-2) : configurer l'URI de tracking et l'experience
-    mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
-    mlflow.set_experiment(MLFLOW_EXPERIMENT)
+    # TODO (S5-2) : configurer le tracking via la config partagee
+    setup_experiment()
 
     # TODO (S5-3) : ouvrir un run englobant l'entrainement et l'evaluation
     with mlflow.start_run(run_name=f"logreg-c{c}"):
+        # TODO (S5-9) : tracer le dataset d'entrainement
+        log_dataset(df, context="training")
+
         model = build_model(c=c, max_iter=max_iter)
         model.fit(x_train, y_train)
 

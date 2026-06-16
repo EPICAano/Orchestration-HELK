@@ -28,3 +28,26 @@ RANDOM_STATE = 42
 MLFLOW_TRACKING_URI = os.getenv("MLFLOW_TRACKING_URI", "http://127.0.0.1:5000")
 MLFLOW_EXPERIMENT = os.getenv("MLFLOW_EXPERIMENT", "classification-baseline")
 MODEL_NAME = os.getenv("MODEL_NAME", "classifier")
+# --- Infrastructure fournie (pas a modifier pour brancher le dataset) ---------
+# Description et tags de l'experience MLflow (utilises par tracking.py, TP S5).
+MLFLOW_EXPERIMENT_DESCRIPTION = os.getenv(
+    "MLFLOW_EXPERIMENT_DESCRIPTION",
+    "Detection de fraude par carte bancaire - cours MLOps",
+)
+def _parse_tags(raw: str) -> dict[str, str]:
+    """Parser une chaine `cle=valeur,cle2=valeur2` en dictionnaire de tags."""
+    tags: dict[str, str] = {}
+    for pair in raw.split(","):
+        if "=" not in pair:
+            continue
+        key, value = pair.split("=", 1)
+        key, value = key.strip(), value.strip()
+        if key:
+            tags[key] = value
+    return tags
+MLFLOW_EXPERIMENT_TAGS = _parse_tags(os.getenv("MLFLOW_EXPERIMENT_TAGS", "course=mlops"))
+# Seuils de la porte qualite (evaluate.py, TP S11) : modele rejete si en dessous.
+EVAL_ROC_AUC_MIN = float(os.getenv("EVAL_ROC_AUC_MIN", "0.65"))
+EVAL_F1_MIN = float(os.getenv("EVAL_F1_MIN", "0.55"))
+# URL de l'API FastAPI ciblee par les clients (DAG de previsions, predict_client).
+API_URL = os.getenv("API_URL", "http://127.0.0.1:8000")
