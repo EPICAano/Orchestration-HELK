@@ -72,3 +72,7 @@ Thumbs.db
 # Materiel de cours (pas mon travail)
 slides/
 tp/
+
+# Artefact genere localement par train.py
+todo/confusion.png
+confusion.png
