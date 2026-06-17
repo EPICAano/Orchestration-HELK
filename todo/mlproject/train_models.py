@@ -192,7 +192,7 @@ def log_run_to_mlflow(
         log_shap_summary(result.best_estimator, x_test, result.name)
 
         signature = infer_signature(x_test, result.best_estimator.predict(x_test))
-        model_info = mlflow.sklearn.log_model(
+        _model_info = mlflow.sklearn.log_model(
             result.best_estimator,
             name="model",
             signature=signature,
