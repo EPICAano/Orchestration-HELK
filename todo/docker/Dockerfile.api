@@ -1,4 +1,4 @@
-# Image de l'API FastAPI d'inference (fournie : support du TP docker-compose - Seance 14).
+# Image de l'API FastAPI d'inference.
 # Build : docker build -f todo/docker/Dockerfile.api -t mlproject-api .
 # Run   : docker run --rm -p 8000:8000 -v "$PWD/models:/app/models:ro" mlproject-api
 
@@ -10,7 +10,7 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
-COPY pyproject.toml ./
+COPY todo/pyproject.toml ./
 RUN pip install --no-cache-dir .
 
 COPY todo/mlproject/ ./mlproject/
