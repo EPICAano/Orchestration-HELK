@@ -11,6 +11,7 @@ import pandas as pd
 import streamlit as st
 
 API_URL = os.environ.get("API_URL", "http://127.0.0.1:8000")
+MLFLOW_URL = os.environ.get("MLFLOW_URL", "http://127.0.0.1:5000")
 
 st.set_page_config(page_title="Detection de fraude", page_icon="🛡️", layout="wide")
 
@@ -20,6 +21,8 @@ with st.sidebar:
     st.markdown("### Hajar Elkadouri")
     st.caption("ESGI / IABD - Projet MLOps")
     st.divider()
+
+    st.markdown("**API d'inference**")
     api_url = st.text_input("URL de l'API", value=API_URL)
     st.link_button("Ouvrir la documentation de l'API", f"{api_url}/docs")
     if st.button("Tester la connexion a l'API"):
@@ -29,6 +32,13 @@ with st.sidebar:
             st.success("API joignable")
         except httpx.HTTPError:
             st.error("API injoignable")
+
+    st.divider()
+    st.markdown("**Suivi des experiences (MLflow)**")
+    mlflow_url = st.text_input("URL de MLflow", value=MLFLOW_URL)
+    st.link_button("Ouvrir MLflow", mlflow_url)
+    st.caption("Renseignez l'URL de votre serveur MLflow (local ou distant).")
+
     st.divider()
     st.caption(
         "Modele : Random Forest (roc_auc 0.972)\n\n"
