@@ -1,13 +1,9 @@
-"""Frontend Streamlit (squelette) : tester l'API de classification.
+"""Frontend Streamlit : tester l'API de classification (fraude CB).
 
 Seance 14 bis - TP Streamlit
-    Application minimale qui appelle l'API FastAPI (TP S12). Le formulaire de
-    prediction est fourni partiellement : a vous d'adapter les champs a VOTRE
-    dataset et de completer les TODO (S14bis-n).
+    Application qui appelle l'API FastAPI (TP S12) pour predire si une
+    transaction est frauduleuse.
     Lancement : `PYTHONPATH=todo streamlit run todo/frontend/app.py`
-
-L'URL de l'API est lue depuis la variable d'environnement API_URL (utile en
-docker compose, ou l'API est joignable via le nom de service `api`).
 """
 from __future__ import annotations
 
@@ -19,8 +15,8 @@ import streamlit as st
 
 API_URL = os.environ.get("API_URL", "http://127.0.0.1:8000")
 
-st.set_page_config(page_title="Classification", layout="wide")
-st.title("Demonstrateur de classification")
+st.set_page_config(page_title="Detection de fraude", layout="wide")
+st.title("Demonstrateur de detection de fraude bancaire")
 
 api_url = st.text_input("URL de l'API", value=API_URL)
 
@@ -30,22 +26,25 @@ with predict_tab:
     st.subheader("Tester l'endpoint /predict")
 
     with st.form("predict_form"):
-        # TODO (S14bis-1) : remplacez ces champs d'exemple par les colonnes de
-        #   VOTRE dataset (memes noms que le schema `Features` de l'API, cf TP
-        #   S12). Utilisez st.number_input pour les variables numeriques et
-        #   st.selectbox pour les categorielles.
-        feature_numerique = st.number_input("feature_numerique", min_value=0.0, value=1.0)
-        feature_categorielle = st.selectbox("feature_categorielle", ["A", "B", "C"])
+        # TODO (S14bis-1) : champs adaptes au dataset fraude (Time, Amount, V1..V28)
+        col1, col2 = st.columns(2)
+        with col1:
+            time = st.number_input("Time", min_value=0.0, value=0.0)
+        with col2:
+            amount = st.number_input("Amount", min_value=0.0, value=149.62)
+
+        st.caption("Composantes PCA V1 a V28 (peuvent etre negatives)")
+        v_values = {}
+        v_cols = st.columns(4)
+        for i in range(1, 29):
+            with v_cols[(i - 1) % 4]:
+                v_values[f"V{i}"] = st.number_input(f"V{i}", value=0.0, format="%.4f")
 
         submitted = st.form_submit_button("Predire")
 
     if submitted:
-        # TODO (S14bis-2) : construire le payload avec les memes cles que le
-        #   schema `Features` de l'API (un dict {nom_colonne: valeur}).
-        payload = {
-            "feature_numerique": feature_numerique,
-            "feature_categorielle": feature_categorielle,
-        }
+        # TODO (S14bis-2) : payload avec les memes cles que le schema Features
+        payload = {"Time": time, "Amount": amount, **v_values}
         try:
             response = httpx.post(f"{api_url}/predict", json=payload, timeout=10.0)
             response.raise_for_status()
@@ -53,16 +52,18 @@ with predict_tab:
         except httpx.HTTPError as exc:
             st.error(f"Appel a l'API impossible : {exc}")
         else:
-            # TODO (S14bis-3) : afficher result["prediction"] (0/1) et
-            #   result["probability"] (ex. st.metric, st.progress) au lieu du
-            #   simple st.json ci-dessous.
-            st.json(result)
+            # TODO (S14bis-3) : affichage lisible du resultat
+            prediction = result["prediction"]
+            probability = result["probability"]
+            if prediction == 1:
+                st.error("Transaction predite : FRAUDULEUSE")
+            else:
+                st.success("Transaction predite : LEGITIME")
+            st.metric("Probabilite de fraude", f"{probability:.2%}")
+            st.progress(min(max(probability, 0.0), 1.0))
 
 with history_tab:
     st.subheader("Historique des previsions")
-    # TODO (S14bis-4 bonus) : si vous ajoutez un endpoint GET /predictions a
-    #   votre API (journal en base), recuperez-le ici avec httpx.get et
-    #   affichez-le avec st.dataframe(pd.DataFrame(rows)). Sinon, laissez ce
-    #   message.
+    # TODO (S14bis-4 bonus) : endpoint GET /predictions non implemente
     st.info("Aucun journal de previsions : ajoutez un endpoint /predictions a l'API (bonus).")
-    _ = pd  # pandas est importe pour l'affichage du dataframe (bonus)
+    _ = pd
