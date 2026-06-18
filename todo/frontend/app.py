@@ -1,6 +1,6 @@
 """Frontend Streamlit : detection de fraude bancaire.
 
-Projet realise par Hajar Elkadouri.
+Projet realise par Hajar Elkadouri - ESGI / IABD.
 """
 from __future__ import annotations
 
@@ -18,14 +18,10 @@ with st.sidebar:
     st.title("🛡️ Detection de fraude")
     st.markdown("**Projet realise par**")
     st.markdown("### Hajar Elkadouri")
-    st.divider()
-    st.markdown(
-        "Projet MLOps - ESGI / IABD\n\n"
-        "Detection de transactions frauduleuses par carte bancaire "
-        "(dataset Credit Card Fraud, modele Random Forest)."
-    )
+    st.caption("ESGI / IABD - Projet MLOps")
     st.divider()
     api_url = st.text_input("URL de l'API", value=API_URL)
+    st.link_button("Ouvrir la documentation de l'API", f"{api_url}/docs")
     if st.button("Tester la connexion a l'API"):
         try:
             r = httpx.get(f"{api_url}/health", timeout=5.0)
@@ -33,15 +29,19 @@ with st.sidebar:
             st.success("API joignable")
         except httpx.HTTPError:
             st.error("API injoignable")
+    st.divider()
+    st.caption(
+        "Modele : Random Forest (roc_auc 0.972)\n\n"
+        "Dataset : Credit Card Fraud (ULB)"
+    )
 
 st.title("Demonstrateur de detection de fraude bancaire")
-st.caption("Saisissez les caracteristiques d'une transaction pour estimer le risque de fraude.")
+st.caption("Saisissez une transaction pour estimer le risque de fraude, ou explorez le modele et les donnees.")
 
-predict_tab, history_tab = st.tabs(["Prediction", "Historique"])
+predict_tab, model_tab, data_tab = st.tabs(["Prediction", "Modele", "Dataset"])
 
 with predict_tab:
     st.subheader("Tester l'endpoint /predict")
-
     with st.form("predict_form"):
         col1, col2 = st.columns(2)
         with col1:
@@ -73,10 +73,39 @@ with predict_tab:
                 st.error("Transaction predite : FRAUDULEUSE")
             else:
                 st.success("Transaction predite : LEGITIME")
-            st.metric("Probabilite de fraude", f"{probability:.2%}")
-            st.progress(min(max(probability, 0.0), 1.0))
+            col_a, col_b = st.columns([1, 2])
+            with col_a:
+                st.metric("Probabilite de fraude", f"{probability:.2%}")
+            with col_b:
+                st.write("Niveau de risque")
+                st.progress(min(max(probability, 0.0), 1.0))
 
-with history_tab:
-    st.subheader("Historique des previsions")
-    st.info("Aucun journal de previsions : ajoutez un endpoint /predictions a l'API (bonus).")
-    _ = pd
+with model_tab:
+    st.subheader("Comparaison des modeles (seance AutoML)")
+    st.caption("Trois familles optimisees par recherche d'hyperparametres, evaluees en ROC AUC.")
+    scores = pd.DataFrame(
+        {"ROC AUC": [0.972, 0.961, 0.958]},
+        index=["Random Forest", "XGBoost", "LightGBM"],
+    )
+    st.bar_chart(scores)
+    st.dataframe(scores, use_container_width=True)
+    st.info("Modele retenu : Random Forest (meilleur ROC AUC = 0.972). C'est lui qui sert les predictions.")
+
+with data_tab:
+    st.subheader("Repartition du jeu de donnees")
+    st.caption("Dataset Credit Card Fraud (ULB) : 284 807 transactions, fortement desequilibre.")
+    repartition = pd.DataFrame(
+        {"Nombre de transactions": [284315, 492]},
+        index=["Legitimes", "Fraudes"],
+    )
+    col1, col2 = st.columns(2)
+    with col1:
+        st.bar_chart(repartition)
+    with col2:
+        st.metric("Total transactions", "284 807")
+        st.metric("Fraudes", "492")
+        st.metric("Taux de fraude", "0.17 %")
+    st.warning(
+        "Le tres fort desequilibre (0.17 % de fraudes) explique l'usage du ROC AUC "
+        "comme metrique principale plutot que la simple precision."
+    )
